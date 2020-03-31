@@ -1,0 +1,253 @@
+---
+title: "A Bayesian Analysis on London Bicycle Share"
+author: "Tianen (Benjamin) Liu"
+date: "12/6/2019"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(rjags)
+library(cowplot)
+library(xtable)
+load('/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final1.RData')
+load('/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final2.RData')
+#load('/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final3.RData')
+load('/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379ouput2.RData')
+```
+
+
+## 1. Introduction
+
+As climate change gets severe, people are more aware of the greenhouse gas emitted through their transportation means. As a way to reduce personal vehicle uses, bicycles received more attention recently when it comes to urban transportation. Bicycle share programs, a convenient service for people without bicycles, emerged in the city of London in England as well as in other cities around the world. This project will analyze the number of bicycle share in london and its relationship to the temperature, apparent temperature (temperature that one feels), humidity, and wind speed. Analyses like such can help bicycle companies determine how many bicycles they should distribute to certain areas.
+
+
+
+## 2. Data Summary
+
+The data set is downloaded from Kaggle (https://www.kaggle.com/hmavrodiev/london-bike-sharing-dataset). It is provided by Transport for Lonodn, a government organization for transportation. The data set contains the following variables. 
+
+- `timestamp`: timestamp field for grouping the data
+- `Count`: the count of a new bike shares 
+- `Temp`: real temperature in Celcius
+- `Temp_Feel`: temperature in Celcius "feels like"
+- `Humidity`: humidity in percentage
+- `Wind_Speed`: wind speed in km/h
+- `Weather`: category of the weather
+- `is_holiday`: boolean field, 1 holiday, 0 non holiday
+- `is_weekend`: boolean field, 1 if the day is weekend
+- `Season`: category field meteorological seasons: 0-spring ; 1-summer; 2-fall; 3-winter
+
+
+Since the data is logged every hour from year 2015 to 2017, it contains a great amount of observations. Considering technical issues and the illegitimacy to use all the data to answer our problem of interest, we have to take a subset of the data set to use in our models. Section 2.1 will talk about the way to create a desired subset in detail.
+
+### 2.1 Data Set Subset Selection
+
+The issue is that if we use the whole data set is that the model will not fit the response variable well. Since the data are collected every hour throughout the day, including mornings and evenings, the temperature, wind speed, humidity, weather, and season are not likely to change significantly. The count of bicycle shares, however, reduces significantly in the evening because it is the time of inactivity in a day. Thus it does not make sense to include both morning data and evening data to analyse our problem of interest. Similarly, the number of bike shares is likely to increase as time goes by because infrastructure can improve and the number of bikes may increase. To account for these issues, we only extracted the data collectde at 12:00pm in all days in 2015. Due to the existence of missing data, the total number of observations in the extracted data set is 362 instead of 365. In addition, we will take out variables of `timestamp` because we do not consider time in this analysis.
+
+
+## 2.2 Exploratory Data Analysis
+
+```{r, warning= FALSE, echo = FALSE, fig.asp = 0.4,include=TRUE}
+#load('/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379FinalProject.RData')
+cor_plot
+```
+
+The correlation plot indicates that we may need a model with interaction between `Temp` and `Temp_Feel`. To compare, we will fit 2 models with these 8 predictors, with one having interaction between `Temp` and `Temp_Feel`, and another one without. 
+
+```{r, warning= FALSE, echo = FALSE, fig.asp = 0.4}
+resp_hist
+```
+
+Our response variable is `Count`, which is a numerical count variable that takes only non-negative integers. By checking the histogram to see the distribution of `Count`, our response variable, we can see that the distribution exhibits a right-skewed curve, with smaller values having higher density. This convinces us to use a Poisson regression. Since our assumption of response variable being a count variable is met, we will not check this assumption in Section 3.6.
+
+
+## 3. Methods and Results
+
+### 3.1 Markov Chain Monte Carlo: Gibbs Sampling
+
+We use Gibbs sampling as the algorithm to generate a posterior distribution of multiple samples of each parameter. We take the posterior means of each parameter's posterior distribution to be the model paramters. In our case, we have `8` predictors, meaning we will have `9` model parameters, including intercept. We then create initial values for these parameters, denoted $\beta_1^{(0)},...,\beta_9^{(0)}$. These values could be anything, but certain values do result in faster convergence. Here, we let the algorithm select its default initial values. Our algorithm has $S = 100,000$ number of iterations. For each iteration, we sample a $\beta_1$ from its full conditional, denoted $\beta_1^{(s)}$. A full conditional of a parameter is the probability of this parameter conditional on the data and all other parameters in their most updated values. In the same iteration, we then sample a $\beta_2$ from its full conditional using $\beta_1^{(s)}$ as one of the conditional parameters. Denote this $\beta_2^{(s)}$. We repeat to get a sample of all 9 parameters and move to the next iteration. 
+
+Since the initial values of the parameter do not matter, the first a few iterations result in inaccurate parameters. Thus we need to eliminate burn-in period. For our case, we eliminate `5000` burn-in iterations. The trace plots in **Appendices 2 and 3** show horizontal bar code patterns, which means we don't have a burn-in period now.
+
+### 3.2. Model 1
+
+For model 1, we include all of 8 predictors without interaction. This model has 9 parameters. As shown by **Appendix 2**, the 3 chains of our MCMC simulation are fully converged. The trace plots show horizontal bar code patterns, with 3 chains overlapping with each other. We conduct a Gelman-Ruben convergence diagnostic and find that the factors are all below 1.1, which indicates a full convergence. 
+
+As shown in **Appendix 4**, The autocorrelation for $\beta_2$ ($\beta_{Temp}$) and $\beta_3$ ($\beta_{Temp\_Feel}$) are exceptionally large. We used thinning process to get these two parameters every `500` values to be able get effect sample of size of 1921 for $\beta_2$ and 1887 for $\beta_3$. The reason that these two autocorrelations are large is due to their large correlation of 0.9. Since in Gibbs sampling, we sample a $\beta_2$ based on previous parameters including $\beta_3$, and vice versa. Thus for every $\beta_2$ and $\beta_3$ we sample, they are highly correlated with the previous value.
+
+
+### 3.3. Model 2
+
+For model 2, we include all of 8 predictors plus an interaction term between `Temp` and `Temp_Feel`. This model has 9 parameters. As shown by **Appendix 3**, the 3 chains of our MCMC simulation are fully converged. The trace plots show horizontal bar code patterns, with 3 chains overlapping with each other. We conduct a Gelman-Ruben convergence diagnostic and find that the factors are all below 1.1, which indicates a full convergence. 
+
+As shown in **Appendix 5**, similar to Model 1, The autocorrelation for $\beta_2$ ($\beta_{Temp}$) and $\beta_3$ ($\beta_{Temp\_Feel}$) are exceptionally large due to the same reasons.
+
+
+### 3.4. Model Selection
+
+The DIC for Model 1 is `24572` , and for Model 2 is `24430`. DIC stands for deviance information criterion, which gives us information about how well the model fits the data. DIC and likelihood have a negative relationship. Likelihood tells us the probability of getting the data if the model and parameters were chosen correctly. Thus we prefer likelihood to be high, and DIC to be low. Solely based on DIC, we would prefer Model 2.
+
+
+### 3.5. Inference on Selected Model
+
+95 percent highest densitiy credible interval for all parameters are shown below. They are ordered according to Section 2 starting from $\beta_2$, with $\beta_1$ being the intercept. Since all intervals do not contain 0, we can say that we are 95 percent confident that all variables have a significant relationship with the response variable.
+
+```{r, echo=FALSE}
+#xtable(M2_hdi)
+```
+
+% latex table generated in R 3.5.3 by xtable 1.8-4 package
+% Sat Dec  7 04:13:30 2019
+\begin{table}[ht]
+\centering
+\begin{tabular}{rrrrrrrrrrrr}
+  \hline
+ & beta[1] & beta[2] & beta[3] & beta[4] & beta[5] & beta[6] & beta[7] & beta[8] & beta[9] & beta[10] & y.pred \\ 
+  \hline
+lower & 7.19 & 0.03 & 0.14 & -0.14 & -0.07 & -0.11 & -0.08 & 0.35 & 0.48 & 0.01 & 1571.00 \\ 
+  upper & 7.21 & 0.10 & 0.19 & -0.13 & -0.06 & -0.08 & -0.07 & 0.38 & 0.50 & 0.02 & 1744.00 \\ 
+   \hline
+\end{tabular}
+\end{table}
+
+To construct a prediction interval, we create a synthetic observation with $Temp = 10, Temp_Feel = 11, Humidity = 60, Wind_Speed = 20, Weather = 2, Holiday = 1, Weekend = 0, Season = 2$. The 95 persent highest density credible interval shows that we are 95 percent confident that the true `Count` of bicycle shares for this situation is between 1572 and 1744.
+
+
+### 3.6. Assumptions Check
+
+- *Linearity*
+
+By checking the scatter plots of log of `Count` versus the numerical explanatory variables, shown in **Appendix 1**, we can conclude that the linearity assumption for this Poisson regression is met, as log of `Count` has linear relationships with the numerical explanatory variables.
+
+
+- *Variance and Mean of Response Variable*
+
+The variance of `Count` is `348914.3` while the mean of `Count` is `1407.329`. Since the variance is larger than twice the mean, we conclude that the response variable is overdispersed. This assumption is not met as the variance is much larger than the mean. This may cause inaccuracies in our final posterior means. In this case, it is better to consider a quasi-Poisson regression or a negative binomial regression to account for overdispersion. However, at this point, we choose to stick with Poisson regression.
+
+
+By checking the Bayesian p-value for standard deviation, we can see that the p-values are `1` for both Model 1 and Model 2. This is due to the high autocorrelation of $\beta_2$ ($\beta_{Temp}$) and $\beta_3$ ($\beta_{Temp\_Feel}$). Since $\beta_2$ and $\beta_3$ in one iteration is highly correlated with the values in the previous iteration. This will result in similar $\beta_2$ and $\beta_3$ values across iterations. In addition, since `Count` has a relatively high correlation with `Temp` and `Temp_Feel`, and the parameters for `Temp` and `Temp_Feel` in both models are relatively large, our `Count` values generated per iteration are similar, which gives them a smaller range, thus a smaller variance. By observing the histogram (shown in **Appendix 6**) for the standard deviation of predicted `Count` values, we can see that the range is roughly 505 to 535, while our true standard deviation is 590.59. This also reflects that the assumption is not met.
+
+- *Indepenence*
+
+We would assume independence is not met because the temperature of two consecutive days are highly correlated. We wouldn't assume temperature values throughout a year to be independent from each other.
+
+## 4. Conclusion
+
+```{r, echo=FALSE, include=FALSE}
+#beta.hat2
+```
+
+Based on Model 2, we conclude that our model for the `Count` of bicycle shares is, let $\lambda$ =average `Count` of bicycle shares.
+
+$$log(\hat\lambda) = 7.20 + 0.0652Temp + 0.166Temp\_Feel - 0.135Humidity -0.0675Wind\_Speed$$
+$$-0.0930Temp*Temp\_Feel - 0.0760Weather +0.365Holiday + 0.490Weekend + 0.0145Season $$
+
+This result is intuitively correct as humidity and wind speed are indeed likely to discourage people from riding bikes. Also on weekends and during holidays, the number of bicycle shares is likely to increase. The result can help bicycle share companies to distribute more bicycles in areas that are warmer, less humid, and less windy. They can also expect more bicycle use during holidays and weekends, so they can act accordingly to benefit their business.
+
+This model has a large DIC because the predictors do not fit the mode very well. We would need additional information to fit a better model. Also, the fact that `Temp` and `Temp_Feel` have high correlation results in the high autocorrelation of these two parameters and high Bayesian p-value close to 1.
+
+## 5. Appendices
+
+### Appendix 1: Linearity Assumption Check
+
+```{r, echo=FALSE, fig.asp = 0.8}
+lin_chk
+```
+
+
+### Appendix 2: Model 1 Convergence Check
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M1_output[,c(1:2)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M1_output[,c(3:4)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M1_output[,c(5:6)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M1_output[,c(7:8)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M1_output[,c(9,375)])
+```
+
+
+```{r, echo = FALSE, fig.asp = 0.8}
+#plot(M1_output)
+print("----- Gelman-Rubin Convergence Diagnostic -----")
+M1_GR
+```
+
+
+### Appendix 3: Model 2 Convergence Check
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,c(1:2)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,c(3:4)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,c(5:6)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,c(7:8)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,c(9:10)])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+plot(M2_output[,376])
+```
+
+```{r, echo=FALSE, fig.asp = 0.7}
+#plot(M2_output)
+print("----- Gelman-Rubin Convergence Diagnostic -----")
+gelman.diag(M2_output[,c(1:10,376)])
+```
+
+### Appendix 4: Model 1 Autocorrelation Check
+
+```{r, echo=FALSE}
+autocorr.plot(M1_output[[1]][,c(1:9,375)])
+```
+
+
+### Appendix 5: Model 2 Autocorrelation Check
+
+```{r, echo=FALSE}
+autocorr.plot(M2_output[[1]][,c(1:10,376)])
+```
+
+
+### Appendix 6: Bayesian p-values and Histograms for Selected Model
+
+```{r, echo=FALSE}
+par(mfrow=c(3,1))
+plot(max_hist, main = "Histogram of maximum predicted Count, Bayesian p-value: 0.94")
+abline(v=max(y),col="red")
+plot(mean_hist, main = "Histogram of mean predicted Count, Bayesian p-value: 0.50")
+abline(v=mean(y),col="red")
+plot(sd_hist, main = "Histogram of sd of predicted Count, Bayesian p-value: 1")
+abline(v=sd(y),col="red")
+```
+
