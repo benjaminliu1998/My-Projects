@@ -1,0 +1,339 @@
+---
+title: "STA_379_FinalProject"
+author: "Tianen (Benjamin) Liu"
+date: "11/28/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Dataset source: https://www.kaggle.com/hmavrodiev/london-bike-sharing-dataset
+
+
+```{r}
+library(readr)
+library(ggplot2)
+library(ggpubr)
+library(ggcorrplot)
+library(rjags)
+library(coda)
+library(HDInterval)
+library(MASS)
+library(pracma)
+london_merged <- read_csv("london_merged.csv")
+#Feb15 <- london_merged[672:1342,]
+
+#deleting useless predictors
+#Feb15 <- data.frame(Feb15[,c(2,3,4,5,6)])
+#colnames(Feb15)[1] <- "Count"
+#colnames(Feb15)[2] <- "Temp"
+#colnames(Feb15)[3] <- "Temp_Feel"
+#colnames(Feb15)[4] <- "Humidity"
+#colnames(Feb15)[5] <- "Wind_Speed"
+```
+
+```{r}
+# data manipulation
+london <- london_merged[,c(2,3,4,5,6,7,8,9,10)]
+list <- c()
+for (i in c(1:8643)){
+  if (grepl("12:00",london_merged$timestamp[i])){
+    list <- c(list, i)
+  }
+}
+london <- london[list,]
+
+nrow <- nrow(london)
+colnames(london)[1] <- "Count"
+colnames(london)[2] <- "Temp"
+colnames(london)[3] <- "Temp_Feel"
+colnames(london)[4] <- "Humidity"
+colnames(london)[5] <- "Wind_Speed"
+colnames(london)[6] <- "Weather"
+colnames(london)[7] <- "Holiday"
+colnames(london)[8] <- "Weekend"
+colnames(london)[9] <- "Season"
+
+london$Weather <- as.factor(london$Weather)
+london$Season <- as.factor(london$Season)
+```
+
+## EDA
+
+```{r}
+plot(london)
+
+corr <- round(cor(london[,1:5]),1)
+cor_plot <- ggcorrplot(corr, hc.order = TRUE, type = "lower",
+   outline.col = "white",
+   ggtheme = ggplot2::theme_gray,
+   colors = c("#6D9EC1", "white", "#E46726"), lab = TRUE)
+
+resp_hist <- ggplot(london, aes(x = Count)) + geom_histogram(binwidth = 50)
+
+# check for overdispersion
+if (var(london$Count) > 2*mean(london$Count)){
+  print("overdispersion")
+}else{
+  print("no overdispersion")
+}
+
+var(london$Count)
+mean(london$Count)
+
+
+# linearity check
+lin_chk_plot_1 <- ggplot(london, aes(y = log(Count), x = Temp)) + geom_point()
+lin_chk_plot_2 <- ggplot(london, aes(y = log(Count), x = Temp_Feel)) + geom_point()
+lin_chk_plot_3 <- ggplot(london, aes(y = log(Count), x = Humidity)) + geom_point()
+lin_chk_plot_4 <- ggplot(london, aes(y = log(Count), x = Wind_Speed)) + geom_point()
+lin_chk <- ggarrange(lin_chk_plot_1, lin_chk_plot_2, lin_chk_plot_3, lin_chk_plot_4, 
+                     labels = c("log(Count) vs. Temp", "log(Count) vs. Temp_Feel", "log(Count) vs. Humidity", 
+                                "log(Count) vs. Wind_Speed"),
+                     ncol = 2, nrow = 2)
+
+save(cor_plot,resp_hist,lin_chk, file = "/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final1.RData")
+```
+
+The correlation plot indicates that we may need a model with interaction. We will fit 2 models with these 4 predictors, with one having interaction between `Temp` and `Temp_Feel`, and another one without. The histogram shows that it is suitable to use a Poisson regression.
+
+
+
+## Model 1
+
+```{r}
+X = cbind(rep(1,nrow(london)),
+          (london$Temp-mean(london$Temp))/sd(london$Temp),
+          (london$Temp_Feel-mean(london$Temp_Feel))/sd(london$Temp_Feel), 
+          (london$Humidity-mean(london$Humidity))/sd(london$Humidity), 
+          (london$Wind_Speed-mean(london$Wind_Speed))/sd(london$Wind_Speed),
+          london$Weather,
+          london$Holiday,
+          london$Weekend,
+          london$Season)
+y = london$Count
+p = dim(X)[2]
+x.new = c(1,
+          (10-mean(london$Temp))/sd(london$Temp),
+          (11-mean(london$Temp_Feel))/sd(london$Temp_Feel), 
+          (60-mean(london$Humidity))/sd(london$Humidity), 
+          (20-mean(london$Wind_Speed))/sd(london$Wind_Speed),
+          "2",
+          "1",
+          "0",
+          "2")
+
+
+sink("London.txt")
+cat("
+    model {
+    ### define the model for the observations
+    for (i in 1:n) {
+    y[i] ~ dpois(theta[i])
+    log(theta[i]) <- inprod(X[i,],beta[])
+
+    ###predictions
+    y.new[i] ~ dpois(theta[i])
+    }
+    ### define the prior distributions
+    for(j in 1:p){
+    beta[j] ~ dnorm(0,.001)
+    }
+
+    ###predict new observation
+    y.pred ~ dpois(thetanew)
+    log(thetanew) <- inprod(x.new, beta[])
+    
+    ds.max <- max(y.new[])
+    ds.mean <- mean(y.new[])
+    ds.sd <- sd(y.new[])
+    }
+    ",fill=TRUE)
+sink()
+
+data = list('y'=y,'n'=length(y),'X'=X,'p'=p,'x.new'=x.new)
+
+jags <- jags.model('London.txt', data = data, n.chains=3)
+
+update(jags, 5000)
+
+output<-coda.samples(jags,c('beta','y.pred','y.new', 'ds.max', 'ds.mean', 'ds.sd'), n.iter = 100000, n.thin = 500)
+
+### did the chain converge?
+plot(output[,c(1:9,375)])
+gelman.diag(output[,c(1:9,375)]) ### below 1.1 is "good"
+gelman.plot(output[,c(1:9,375)])
+
+### PPC
+d0.max = max(y)
+d0.mean = mean(y)
+d0.sd = sd(y)
+hist(output[[1]][,'ds.max'])
+abline(v=d0.max,col="red")
+hist(output[[1]][,'ds.mean'])
+abline(v=d0.mean,col="red")
+hist(output[[1]][,'ds.sd'])
+abline(v=d0.sd,col="red")
+mean(d0.max>output[[1]][,'ds.max'])
+mean(d0.mean>output[[1]][,'ds.mean'])
+mean(d0.sd>output[[1]][,'ds.sd'])
+
+
+
+### did we run the chain long enough?
+print("----- AUTOCORR -----")
+autocorr.plot(output[,c(1:9,375)]) 
+
+### perform inference
+print("----- SUMMARY -----")
+summary(output[,c(1:9,375)])
+print("----- HDI -----")
+hdi(output[,c(1:9,375)])
+print("----- DIC -----")
+dic.samples(jags, 10000)
+print("----- ESS -----")
+effectiveSize(output[,c(1:9,375)])
+```
+
+```{r}
+# saving images
+M1_output <- output
+M1_output_plot <- plot(output[,c(1:9,375)])
+M1_GR <- gelman.diag(output[,c(1:9,375)])
+M1_GR_plot <- gelman.plot(output[,c(1:9,375)])
+M1_autocor_plot <- autocorr.plot(output[,c(1:9,375)]) 
+M1_summary_output <- summary(output[,c(1:9,375)])
+M1_hdi <- hdi(output[,c(1:9,375)])
+M1_dic <- dic.samples(jags, 10000)
+M1_ess <- effectiveSize(output[,c(1:9,375)])
+M1_pval_mean <- mean(d0.mean>output[[1]][,'ds.mean'])
+M1_pval_sd <- mean(d0.sd>output[[1]][,'ds.sd'])
+save(M1_output, M1_output_plot, M1_GR, M1_GR_plot, M1_autocor_plot, M1_summary_output, M1_hdi, M1_dic, M1_ess, M1_pval_mean, M1_pval_sd,y, file = "/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final2.RData", eval.promises = TRUE)
+```
+
+
+## Model 2
+
+```{r}
+interaction <- london$Temp * london$Temp_Feel
+X2 = cbind(rep(1,nrow(london)),
+          (london$Temp-mean(london$Temp))/sd(london$Temp),
+          (london$Temp_Feel-mean(london$Temp_Feel))/sd(london$Temp_Feel), 
+          (london$Humidity-mean(london$Humidity))/sd(london$Humidity), 
+          (london$Wind_Speed-mean(london$Wind_Speed))/sd(london$Wind_Speed),
+          (interaction - mean(interaction))/sd(interaction),
+          london$Weather,
+          london$Holiday,
+          london$Weekend,
+          london$Season)
+          
+y = london$Count
+p2 = dim(X2)[2]
+x2.new = c(1,
+          (10-mean(london$Temp))/sd(london$Temp),
+          (11-mean(london$Temp_Feel))/sd(london$Temp_Feel), 
+          (60-mean(london$Humidity))/sd(london$Humidity), 
+          (20-mean(london$Wind_Speed))/sd(london$Wind_Speed),
+          (110-mean(interaction))/sd(interaction),
+          "2",
+          "1",
+          "0",
+          "2")
+
+
+sink("London2.txt")
+cat("
+    model {
+    ### define the model for the observations
+    for (i in 1:n) {
+    y[i] ~ dpois(theta[i])
+    log(theta[i])<-inprod(X[i,],beta[])
+
+    ### prediction
+    y.new[i] ~ dpois(theta[i])
+    }
+    ### define the prior distributions
+    for(j in 1:p){
+    beta[j] ~ dnorm(0,.001)
+    }
+
+    ###predict new observation
+    y.pred ~ dpois(thetanew)
+    log(thetanew) <- inprod(x.new,beta[])
+
+    ds.max <- max(y.new[])  
+    ds.mean <- mean(y.new[])
+    ds.sd <- sd(y.new[])
+
+    }
+    ",fill=TRUE)
+sink()
+
+data2 = list('y'=y,'n'=length(y),'X'=X2,'p'=p2,'x.new'=x2.new)
+
+jags2 <- jags.model('London2.txt', data = data2, n.chains=3)
+
+update(jags2, 5000)
+
+output2<-coda.samples(jags2,c('beta','y.pred','y.new', 'ds.max', 'ds.mean', 'ds.sd'), n.iter = 100000, n.thin = 500)
+
+
+### did the chain converge?
+plot(output2[,c(1:10,376)])
+gelman.diag(output2[,c(1:10,376)]) ### below 1.1 is "good"
+gelman.plot(output2[,c(1:10,376)])
+
+### PPC
+d0.max2 = max(y)
+d0.mean2 = mean(y)
+d0.sd2 = sd(y)
+hist(output2[[1]][,'ds.max'])
+abline(v=d0.max2,col="red")
+hist(output2[[1]][,'ds.mean'])
+abline(v=d0.mean2,col="red")
+hist(output2[[1]][,'ds.sd'])
+abline(v=d0.sd2,col="red")
+mean(d0.max2>output2[[1]][,'ds.max'])
+mean(d0.mean2>output2[[1]][,'ds.mean'])
+mean(d0.sd2>output2[[1]][,'ds.sd'])
+
+
+### did we run the chain long enough?
+autocorr.plot(output2[,c(1:10,376)]) 
+effectiveSize(output2[,c(1:10,376)])
+
+### perform inference
+summary(output2[,c(1:10,376)])
+hdi(output2[,c(1:10,376)])
+dic.samples(jags2, 10000)
+
+beta.hat2=apply(output2[[1]][,1:10], 2, mean)
+beta.hat2
+```
+
+```{r}
+# saving images
+M2_output <- output2
+M2_output_plot <- plot(output2[,c(1:10,376)])
+M2_GR <- gelman.diag(output2[,c(1:10,376)])
+M2_GR_plot <- gelman.plot(output2[,c(1:10,376)])
+M2_autocor_plot <- autocorr.plot(output2[,c(1:10,376)]) 
+M2_summary_output <- summary(output2[,c(1:10,376)])
+M2_hdi <- hdi(output2[,c(1:10,376)])
+M2_dic <- dic.samples(jags2, 10000)
+M2_ess <- effectiveSize(output2[,c(1:10,376)])
+M2_pval_mean <- mean(d0.mean2>output2[[1]][,'ds.mean'])
+M2_pval_sd <- mean(d0.sd2>output2[[1]][,'ds.sd'])
+
+max_hist <- hist(output2[[1]][,'ds.max'], main = "Histogram of maximum predicted Count, Bayesian p-value: 0.94")
+mean_hist <- hist(output2[[1]][,'ds.mean'], main = "Histogram of mean predicted Count, Bayesian p-value: 0.50")
+sd_hist <- hist(output2[[1]][,'ds.sd'], main = "Histogram of sd of predicted Count, Bayesian p-value: 1")
+
+save(M2_output, M2_output_plot, M2_GR, M2_GR_plot, M2_autocor_plot, M2_summary_output, M2_hdi, M2_dic, M2_ess, M2_pval_mean, M2_pval_sd, max_hist,mean_hist,sd_hist, beta.hat2,file = "/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379Final3.RData")
+save(M2_output, max_hist,mean_hist,sd_hist,file = "/Volumes/GoogleDrive/My Drive/#7 Fall 2019 Senior/STA 379 Applied Bayesian/STA379ouput2.RData")
+```
+
