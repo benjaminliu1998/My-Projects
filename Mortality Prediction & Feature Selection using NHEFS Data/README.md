@@ -1,1 +1,3 @@
+### Abstract
 
+Predicting the probability of the occurrence of a binary outcome or event is of key importance in many areas of clinical and health services research. We utilize models in the essence of Logistic Regression and GBDT model to obtain the around 84% accuracy in predicting the mortality rate. Furthermore, by examining the SHAP value of our GBDT model using LightGBM framework, we discover the smallest subset of predictors to achieve a comparable performance. We find out that age, sex, systolic blood pressure, and sedimentation rate is the most robust while keeping high accuracy in predicting the mortality rate.
