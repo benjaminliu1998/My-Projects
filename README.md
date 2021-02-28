@@ -1,6 +1,6 @@
 # My-Projects Table of Contents
 
-### Harvard University, MS Data Science
+### Harvard University, *MS Data Science*
 - **Mortality Prediction & Feature Selection using NHEFS Data**
   - GBDT, LightGBM
   - SHAP dependence plot for feature selection and interpretation
@@ -11,7 +11,7 @@
   - TravisCI, CodeCov
   - Group project with the teammates in Readme
 
-### Wake Forest University, BS Mathematical Statistics, BS Computer Science
+### Wake Forest University, *BS Mathematical Statistics, BS Computer Science*
 - **Classification of Drug Prescribing Information Using Long Short-Term Memory Networks**
   - Publication on ACM/SIGAPP SAC 2021
   - Biomedical Text Mining, NLP
