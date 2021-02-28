@@ -7,6 +7,7 @@
   - Group project with the co-authors of the paper
 
 - **Automatic Differentiation Python Package**
+  - Link: https://github.com/DeriveMeCrazy-AutoDiff/cs107-FinalProject
   - TravisCI, CodeCov
   - Group project with the teammates in Readme
 
